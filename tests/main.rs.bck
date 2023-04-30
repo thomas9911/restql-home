@@ -1,0 +1,89 @@
+use core::panic;
+
+use assert_cmd::Command;
+use tokio_postgres::NoTls;
+
+use std::{process::Stdio, sync::Arc};
+use tokio::sync::Notify;
+
+const SETUP_SQL: &str = include_str!("setup.sql");
+
+#[tokio::test]
+async fn main() -> anyhow::Result<()> {
+    let (client, connection) = tokio_postgres::connect(
+        "host=localhost port=5432 user=postgres password=example dbname=postgres",
+        NoTls,
+    )
+    .await?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
+
+    client.batch_execute(SETUP_SQL).await?;
+
+    let notify = Arc::new(Notify::new());
+    let notify2 = notify.clone();
+
+    let notifier = notify.notified();
+
+    let killer_notify = Arc::new(Notify::new());
+    let killer_notify2 = killer_notify.clone();
+
+    let notifier = notify.notified();
+
+    let handle = tokio::spawn(async move {
+        let cmd = escargot::CargoBuild::new()
+            .bin("restql-at-home")
+            .run()
+            .unwrap();
+
+        let mut child = cmd
+            .command()
+            .stdout(Stdio::null())
+            // .stdout(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        notify2.notify_waiters();
+
+        killer_notify2.notified().await;
+        child.kill().unwrap();
+    });
+
+    notifier.await;
+
+    let data = serde_json::json!({"email": "example@example.com", "username": "example", "password": "example", "created_on": "2020-04-12T12:23:34"});
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("http://localhost:9503/accounts")
+        .json(&data)
+        .send()
+        .await?;
+
+    let data: serde_json::Map<String, serde_json::Value> = response.json().await.unwrap();
+
+    assert_eq!(data["username"], "example");
+    assert_eq!(data["password"], "example");
+    assert_eq!(data["email"], "example@example.com");
+
+    let id = &data["id"];
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://localhost:9503/accounts/{id}"))
+        .send()
+        .await?;
+
+    let get_data: serde_json::Map<String, serde_json::Value> = response.json().await.unwrap();
+
+    // assert post and get results are the same
+    assert_eq!(data, get_data);
+
+    killer_notify.notify_one();
+    handle.await.unwrap();
+
+    Ok(())
+}

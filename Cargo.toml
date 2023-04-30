@@ -2,6 +2,7 @@
 name = "restql-home"
 version = "0.1.0"
 edition = "2021"
+default-run = "restql-at-home"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,3 +21,23 @@ uuid = { version = "1", features = ["serde", "v4"] }
 postgres-types = { version = "0.2.5", features = ["derive"] }
 time = { version = "0.3.20", features = ["serde", "formatting", "parsing", "macros"] }
 futures-util = "0.3.28"
+reqwest = { version = "0.11.17", features = ["json"] }
+escargot = "0.5.7"
+axum-extra = "0.7.4"
+either = { version = "1.8.1", features = ["serde"] }
+
+
+# [[bin]]
+# name = "integration-test"
+# path = "integration-test/main.rs"
+
+[dev-dependencies]
+assert_cmd = "2.0.11"
+libtest-mimic = "0.6.0"
+predicates = "3.0.3"
+reqwest = "0.11.17"
+
+[[test]]
+name = "integration-test"
+path = "tests/main.rs"
+harness = false

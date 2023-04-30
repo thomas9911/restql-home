@@ -1,5 +1,6 @@
 use axum::extract::{Json, Path, State};
 use deadpool_postgres::GenericClient;
+use either::Either;
 use futures_util::stream::StreamExt;
 
 use time::{OffsetDateTime, PrimitiveDateTime};
@@ -16,33 +17,12 @@ pub use value::Value;
 pub type JsonMap = std::collections::HashMap<String, Value>;
 pub type OptionalJsonMap = std::collections::HashMap<String, Option<Value>>;
 
-// #[derive(Debug, serde::Deserialize)]
-// #[serde(untagged)]
-// pub enum RecordId {
-//     Int(i64),
-//     Uuid(Uuid),
-//     String(String),
-// }
-
-// impl ToSql for RecordId {
-//     fn to_sql(
-//         &self,
-//         ty: &tokio_postgres::types::Type,
-//         out: &mut tokio_postgres::types::private::BytesMut,
-//     ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-//         match self {
-//             RecordId::Int(x) => x.to_sql(ty, out),
-//             RecordId::Uuid(x) => x.to_sql(ty, out),
-//             RecordId::String(x) => x.to_sql(ty, out),
-//         }
-//     }
-
-//     fn accepts(ty: &tokio_postgres::types::Type) -> bool {
-//         i64::accepts(ty) || Uuid::accepts(ty) || String::accepts(ty)
-//     }
-
-//     tokio_postgres::types::to_sql_checked!();
-// }
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[serde(transparent)]
+pub struct InsertBody {
+    #[serde(with = "either::serde_untagged")]
+    inner: Either<JsonMap, Vec<JsonMap>>,
+}
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -50,11 +30,13 @@ pub struct AppState {
 }
 
 pub async fn get_record(
-    Path((table_name, record_id)): Path<(String, Value)>,
+    Path((table_name, record_id)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<Json<Option<OptionalJsonMap>>, MyError> {
     let client = state.pool.get().await?;
     dbg!((&table_name, &record_id));
+
+    let record_id: Value = serde_json::from_str(&record_id)?;
 
     let statement = format!("select * from {table_name} where id = $1");
     let statement = client.prepare(&statement).await?;
@@ -69,13 +51,25 @@ pub async fn get_record(
     Ok(Json(result))
 }
 
+#[axum::debug_handler]
 pub async fn insert_record(
+    Path(table_name): Path<String>,
+    State(state): State<AppState>,
+    Json(data): Json<InsertBody>,
+) -> Result<Json<OptionalJsonMap>, MyError> {
+    dbg!((&table_name, &data));
+
+    match data.inner {
+        Either::Left(data) => inner_insert_record(Path(table_name), State(state), Json(data)).await,
+        Either::Right(data) => todo!(),
+    }
+}
+
+async fn inner_insert_record(
     Path(table_name): Path<String>,
     State(state): State<AppState>,
     Json(data): Json<JsonMap>,
 ) -> Result<Json<OptionalJsonMap>, MyError> {
-    dbg!((&table_name, &data));
-
     let mut columns: Vec<_> = data.keys().collect();
     columns.sort_unstable();
 
