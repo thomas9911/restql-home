@@ -1,4 +1,5 @@
 DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS items;
 
 CREATE TABLE accounts (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -10,4 +11,11 @@ CREATE TABLE accounts (
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-insert into accounts (username, password, email, created_on) values ('hoi', 'hoi', 'hoi@example.com', NOW());
+CREATE TABLE items (
+        id VARCHAR (64) PRIMARY KEY,
+        description TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO accounts (username, password, email, created_on) values ('hoi', 'hoi', 'hoi@example.com', NOW());
+INSERT INTO items (id, description) values ('ID-12345', 'This is a nice object');

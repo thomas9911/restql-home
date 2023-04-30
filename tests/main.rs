@@ -1,7 +1,3 @@
-use core::panic;
-use std::fmt::Display;
-
-use assert_cmd::Command;
 use tokio_postgres::{Client, NoTls};
 
 use futures_util::Future;
@@ -88,7 +84,10 @@ async fn teardown(teststate: SetupState) -> anyhow::Result<()> {
 }
 
 async fn inner(args: Arguments) -> anyhow::Result<Conclusion> {
-    let tests = vec![Trial::test("create", || trialing(insert_data()))];
+    let tests = vec![
+        Trial::test("insert_data", || trialing(insert_data())),
+        Trial::test("get string id", || trialing(get_string_id())),
+        ];
 
     Ok(libtest_mimic::run(&args, tests))
 }
@@ -133,4 +132,20 @@ async fn insert_data() {
 
     // assert post and get results are the same
     assert_eq!(data, get_data);
+}
+
+
+async fn get_string_id() {
+    let id = "ID-12345";
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://localhost:9503/items/{id}"))
+        .send()
+        .await
+        .unwrap();
+
+    let data: serde_json::Map<String, serde_json::Value> = response.json().await.unwrap();
+
+    assert_eq!(data["id"], id);
+    assert_eq!(data["description"], "This is a nice object");
 }

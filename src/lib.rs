@@ -34,9 +34,10 @@ pub async fn get_record(
     State(state): State<AppState>,
 ) -> Result<Json<Option<OptionalJsonMap>>, MyError> {
     let client = state.pool.get().await?;
-    dbg!((&table_name, &record_id));
 
-    let record_id: Value = serde_json::from_str(&record_id)?;
+    let record_id: Value = serde_json::from_str(&record_id).unwrap_or( Value::String(record_id));
+    
+    dbg!((&table_name, &record_id));
 
     let statement = format!("select * from {table_name} where id = $1");
     let statement = client.prepare(&statement).await?;
