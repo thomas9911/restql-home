@@ -1,7 +1,6 @@
 use axum::response::{IntoResponse, Response};
 use hyper::StatusCode;
 
-
 #[derive(Debug)]
 // #[error(transparent)]
 pub struct MyError {

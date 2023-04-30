@@ -134,32 +134,17 @@ fn row_to_pair((index, key): (usize, &Column), row: &Row) -> (String, Option<Val
     use tokio_postgres::types::Type;
 
     let value = match key.type_() {
-        &Type::BOOL => {
-            row.get::<_, Option<bool>>(index).map(Value::Bool)
-        }
-        &Type::INT2 | &Type::INT4 | &Type::INT8 => {
-            row.get::<_, Option<i64>>(index).map(Value::Int)
-        }
-        &Type::FLOAT4 | &Type::FLOAT8 => {
-            row.get::<_, Option<f64>>(index).map(Value::Float)
-        }
-        &Type::TIMESTAMP => {
-            if let Some(datetime) = row.get::<_, Option<PrimitiveDateTime>>(index) {
-                dbg!(&datetime);
-                Some(Value::DateTime(datetime))
-            } else {
-                None
-            }
-        }
-        &Type::TIMESTAMPTZ => {
-            row.get::<_, Option<OffsetDateTime>>(index).map(Value::DateTimeTz)
-        }
-        &Type::UUID => {
-            row.get::<_, Option<Uuid>>(index).map(Value::Uuid)
-        }
-        _other_type => {
-            row.get::<_, Option<String>>(index).map(Value::String)
-        }
+        &Type::BOOL => row.get::<_, Option<bool>>(index).map(Value::Bool),
+        &Type::INT2 | &Type::INT4 | &Type::INT8 => row.get::<_, Option<i64>>(index).map(Value::Int),
+        &Type::FLOAT4 | &Type::FLOAT8 => row.get::<_, Option<f64>>(index).map(Value::Float),
+        &Type::TIMESTAMP => row
+            .get::<_, Option<PrimitiveDateTime>>(index)
+            .map(Value::DateTime),
+        &Type::TIMESTAMPTZ => row
+            .get::<_, Option<OffsetDateTime>>(index)
+            .map(Value::DateTimeTz),
+        &Type::UUID => row.get::<_, Option<Uuid>>(index).map(Value::Uuid),
+        _other_type => row.get::<_, Option<String>>(index).map(Value::String),
     };
 
     // let value = row.get(index);

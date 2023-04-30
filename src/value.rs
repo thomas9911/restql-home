@@ -1,6 +1,6 @@
 use postgres_types::ToSql;
 use serde::{Deserialize, Serialize};
-use time::format_description::well_known::{iso8601};
+use time::format_description::well_known::iso8601;
 use time::{OffsetDateTime, PrimitiveDateTime};
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ mod datetime_iso8601 {
     use serde::ser::Error as _;
     use serde::{Deserializer, Serialize, Serializer};
     use time::error::ComponentRange;
-    use time::format_description::well_known::{Iso8601};
+    use time::format_description::well_known::Iso8601;
     use time::format_description::FormatItem;
     use time::macros::format_description;
     use time::{Date, PrimitiveDateTime};
