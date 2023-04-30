@@ -1,7 +1,7 @@
-use axum::extract::{Json, Path, Query, State};
+use axum::extract::{Json, Path, State};
 use deadpool_postgres::GenericClient;
 use futures_util::stream::StreamExt;
-use time::format_description::well_known::{iso8601, Iso8601};
+
 use time::{OffsetDateTime, PrimitiveDateTime};
 use tokio_postgres::{Column, Row};
 use uuid::Uuid;
@@ -117,7 +117,7 @@ pub async fn insert_record(
         data = Some(row_to_object(item?));
     }
 
-    let data = data.ok_or(anyhow::Error::msg("invalid return statement"))?;
+    let data = data.ok_or_else(|| anyhow::Error::msg("invalid return statement"))?;
 
     Ok(Json(data))
 }
@@ -135,25 +135,13 @@ fn row_to_pair((index, key): (usize, &Column), row: &Row) -> (String, Option<Val
 
     let value = match key.type_() {
         &Type::BOOL => {
-            if let Some(a) = row.get(index) {
-                Some(Value::Bool(a))
-            } else {
-                None
-            }
+            row.get::<_, Option<bool>>(index).map(Value::Bool)
         }
         &Type::INT2 | &Type::INT4 | &Type::INT8 => {
-            if let Some(number) = row.get::<_, Option<i64>>(index) {
-                Some(Value::Int(number))
-            } else {
-                None
-            }
+            row.get::<_, Option<i64>>(index).map(Value::Int)
         }
         &Type::FLOAT4 | &Type::FLOAT8 => {
-            if let Some(number) = row.get::<_, Option<f64>>(index) {
-                Some(Value::Float(number))
-            } else {
-                None
-            }
+            row.get::<_, Option<f64>>(index).map(Value::Float)
         }
         &Type::TIMESTAMP => {
             if let Some(datetime) = row.get::<_, Option<PrimitiveDateTime>>(index) {
@@ -164,25 +152,13 @@ fn row_to_pair((index, key): (usize, &Column), row: &Row) -> (String, Option<Val
             }
         }
         &Type::TIMESTAMPTZ => {
-            if let Some(datetime) = row.get::<_, Option<OffsetDateTime>>(index) {
-                Some(Value::DateTimeTz(datetime))
-            } else {
-                None
-            }
+            row.get::<_, Option<OffsetDateTime>>(index).map(Value::DateTimeTz)
         }
         &Type::UUID => {
-            if let Some(uuid) = row.get::<_, Option<Uuid>>(index) {
-                Some(Value::Uuid(uuid))
-            } else {
-                None
-            }
+            row.get::<_, Option<Uuid>>(index).map(Value::Uuid)
         }
         _other_type => {
-            if let Some(x) = row.get::<_, Option<String>>(index) {
-                Some(Value::String(x))
-            } else {
-                None
-            }
+            row.get::<_, Option<String>>(index).map(Value::String)
         }
     };
 
