@@ -87,7 +87,7 @@ async fn inner(args: Arguments) -> anyhow::Result<Conclusion> {
     let tests = vec![
         Trial::test("insert_data", || trialing(insert_data())),
         Trial::test("get string id", || trialing(get_string_id())),
-        ];
+    ];
 
     Ok(libtest_mimic::run(&args, tests))
 }
@@ -133,7 +133,6 @@ async fn insert_data() {
     // assert post and get results are the same
     assert_eq!(data, get_data);
 }
-
 
 async fn get_string_id() {
     let id = "ID-12345";
