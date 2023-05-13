@@ -13,7 +13,9 @@ pub async fn get_record<C: deadpool_postgres::GenericClient>(
 ) -> Result<Option<OptionalJsonMap>> {
     // let client = state.pool.get().await?;
 
-    let record_id: Value = serde_json::from_str(&record_id).unwrap_or(Value::String(record_id));
+    // dbg!(serde_json::from_str::<Value>(&record_id));
+    // let record_id: Value = serde_json::from_str(&record_id).unwrap_or(Value::String(record_id));
+    let record_id = Value::parse_str(&record_id);
 
     dbg!((&table_name, &record_id));
 

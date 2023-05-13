@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
-
 use crate::methods;
 use crate::AppState;
 use crate::JsonMap;
@@ -8,9 +5,7 @@ use crate::{MyError, Result};
 
 use deadpool_postgres::{Client, Transaction};
 use either::Either;
-use either::Either::Left;
 use futures_util::FutureExt;
-use hyper::client;
 use mlua::Function;
 use mlua::SerializeOptions;
 use mlua::UserData;
@@ -32,6 +27,11 @@ struct TransactionAppState {
 // impl<'a> UserData for TransactionAppState {}
 
 // impl<'a> UserData for TransactionAppState<'a> {
+
+fn to_lua_error(e: Arc<dyn std::error::Error + Send + Sync>) -> mlua::Error {
+    mlua::Error::ExternalError(e)
+}
+
 impl<'a> UserData for TransactionAppState {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_async_method(
@@ -49,7 +49,7 @@ impl<'a> UserData for TransactionAppState {
                     .await
                     .unwrap();
 
-                let response = rx.await.unwrap();
+                let response = rx.await.map_err(|e| to_lua_error(Arc::new(e)))?;
 
                 let options = SerializeOptions::new();
                 lua.to_value_with(&response, options)
@@ -65,16 +65,28 @@ impl<'a> UserData for TransactionAppState {
                     .await
                     .unwrap();
 
-                let response = rx.await.unwrap();
+                let response = rx.await.map_err(|e| to_lua_error(Arc::new(e)))?;
 
-                // let mut conn = this.pool.get().await.unwrap();
-                // let transaction = conn.transaction().await.unwrap();
-
-                // let response = methods::get_record(transaction, (table, record_id), this).await?;
                 let options = SerializeOptions::new();
                 lua.to_value_with(&response, options)
             },
         );
+
+        methods.add_async_method("rollback", |lua, this, value: mlua::Value| async move {
+            let options = DeserializeOptions::new();
+            let user_output: serde_json::Value = lua.from_value_with(value, options)?;
+
+            let (tx, rx) = oneshot::channel();
+            this.sender
+                .send((Command::Rollback(user_output), tx))
+                .await
+                .unwrap();
+
+            let response = rx.await.map_err(|e| to_lua_error(Arc::new(e)))?;
+
+            let options = SerializeOptions::new();
+            lua.to_value_with(&response, options)
+        });
     }
 }
 
@@ -91,13 +103,20 @@ pub async fn build_runtime<'a>(
     {
         let globals = runtime.globals();
         // override / mock the print function
-        globals.set("print", runtime.create_function(lua_print)?)?;
+        // globals.set("print", runtime.create_function(lua_print)?)?;
         globals.set("transaction", TransactionAppState { sender })?;
         // globals.set("transaction", app_state)?;
     }
     runtime.sandbox(true)?;
 
     return Ok(runtime);
+}
+
+fn value_from_option(value: Option<serde_json::Value>) -> serde_json::Value {
+    match value {
+        Some(val) => val,
+        None => serde_json::Value::Null,
+    }
 }
 
 async fn something(
@@ -125,12 +144,12 @@ async fn xd(
     match res {
         Ok(success) => {
             let (tx, rx) = oneshot::channel();
-            cmd_tx.send((Command::Done(success), tx)).await.unwrap();
-            return rx.await.map_err(|e| e.into());
+            cmd_tx.send((Command::Done(success), tx)).await.ok();
+            return Ok(value_from_option(rx.await.ok()));
         }
         Err(e) => {
             let (tx, rx) = oneshot::channel();
-            cmd_tx.send((Command::Error(e), tx)).await.unwrap();
+            cmd_tx.send((Command::Error(e), tx)).await.ok();
             return rx.await.map_err(|e| e.into());
         }
     };
@@ -140,8 +159,15 @@ async fn xd(
 pub enum Command {
     Get(String, String),
     Create(String, JsonMap),
+    Rollback(serde_json::Value),
     Error(MyError),
     Done(serde_json::Value),
+}
+
+pub enum CommitOrRollback {
+    Commit(serde_json::Value),
+    Rollback(serde_json::Value),
+    RollbackError(MyError),
 }
 
 pub async fn transaction(
@@ -149,14 +175,6 @@ pub async fn transaction(
     script: &str,
     input: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    // if app_state.client.is_none() {
-    //     let client = app_state.pool.get().await?;
-    //     app_state.client = Some(Arc::new(Mutex::new(client)));
-    // }
-
-    // let transaction = client.transaction().await.unwrap();
-
-    // dbg!(&result);
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<(Command, oneshot::Sender<serde_json::Value>)>(100);
 
     let app_state_transaction = app_state.clone();
@@ -194,77 +212,37 @@ pub async fn transaction(
                         )
                         .unwrap();
                 }
+                Command::Rollback(value) => {
+                    result_container = Some(CommitOrRollback::Rollback(value));
+                    break;
+                }
                 Command::Done(value) => {
-                    result_container = Some(Either::Left(value));
+                    result_container = Some(CommitOrRollback::Commit(value));
                     break;
                 }
                 Command::Error(value) => {
-                    result_container = Some(Either::Right(value));
+                    result_container = Some(CommitOrRollback::RollbackError(value));
                     break;
                 }
             }
         }
 
-        // if let Some(err) = error_container {
-        //     transaction.rollback().await?;
-        //     Err(err)
-        // } else {
-        //     Result::Ok(())
-        // }
         match result_container {
-            Some(Either::Left(value)) => {
+            Some(CommitOrRollback::Commit(value)) => {
                 dbg!(transaction.commit().await);
                 Ok(value)
             }
-            Some(Either::Right(value)) => {
+            Some(CommitOrRollback::RollbackError(value)) => {
                 dbg!(transaction.rollback().await);
                 Err(value)
+            }
+            Some(CommitOrRollback::Rollback(value)) => {
+                dbg!(transaction.rollback().await);
+                Ok(value)
             }
             _ => panic!("invalid "),
         }
     });
-
-    // something(app_state, script, input, cmd_tx).await?;
-    // transaction_join.await??;
-
-    // something(app_state, script, input, cmd_sender).then( async {
-    //     match res {
-    //         Ok(success) => {
-    //             let (tx, rx) = oneshot::channel();
-    //             cmd_tx.send((Command::Done(success), tx)).await.unwrap();
-    //             return rx.await.map_err(|e| e.into());
-    //         },
-    //         Err(e) => {
-    //             let (tx, rx) = oneshot::channel();
-    //             cmd_tx.send((Command::Error(e), tx)).await.unwrap();
-    //             return rx.await.map_err(|e| e.into());
-    //         },
-    //     };
-    // }).await;
-
-    // something(app_state, script, input, cmd_sender)
-    //     .then(move |res| async { xd(res, cmd_tx) })
-    //     .await;
-
-    // tokio::select! {
-    //     res = something(app_state, script, input, cmd_sender) => {
-    //         match res {
-    //             Ok(success) => {
-    //                 let (tx, rx) = oneshot::channel();
-    //                 cmd_tx.send((Command::Done(success), tx)).await.unwrap();
-    //                 return rx.await.map_err(|e| e.into());
-    //             },
-    //             Err(e) => {
-    //                 let (tx, rx) = oneshot::channel();
-    //                 cmd_tx.send((Command::Error(e), tx)).await.unwrap();
-    //                 return rx.await.map_err(|e| e.into());
-    //             },
-    //         };
-    //     },
-    //     res = transaction_join => {
-    //         res??;
-    //     },
-    // };
 
     let (left, right) = tokio::join!(
         something(app_state.clone(), script, input, cmd_sender.clone())
@@ -273,9 +251,11 @@ pub async fn transaction(
         transaction_join
     );
 
-    right??;
+    // returns user script error
+    let out = right??;
+    left.ok();
 
-    left
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -335,6 +315,50 @@ async fn transaction_test() {
     let response = transaction(test_app_state(), script, &data).await.unwrap();
 
     assert_eq!(response["email"], "example1234@example.com");
+}
+
+#[tokio::test]
+async fn transaction_test_rollback() {
+    let script = r#"
+    out = transaction:create("accounts", input)
+    out = transaction:get("accounts", out["id"])
+    transaction:rollback("rolled back")
+    -- does not get executed because rollback returns
+    out = transaction:create("accounts", input)
+    return out
+    "#;
+
+    let data = serde_json::json!({
+        "email": "example1235@example.com",
+        "username": "example1235",
+        "password": "example",
+        "created_on": "2020-04-12T12:23:34"
+    });
+
+    let response = transaction(test_app_state(), script, &data).await.unwrap();
+
+    assert_eq!(response, "rolled back");
+}
+
+#[tokio::test]
+async fn transaction_test_uniqueness_error() {
+    let script = r#"
+    out, error = pcall(function () transaction:create("accounts", input) end)
+    out, error = pcall(function () transaction:create("accounts", input) end)
+    
+    return out
+    "#;
+
+    let data = serde_json::json!({
+        "email": "example1236@example.com",
+        "username": "example1236",
+        "password": "example",
+        "created_on": "2020-04-12T12:23:34"
+    });
+
+    let response = transaction(test_app_state(), script, &data).await.unwrap();
+
+    assert_eq!(response, "rolled back");
 }
 
 #[tokio::test]
