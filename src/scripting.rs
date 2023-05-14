@@ -3,15 +3,13 @@ use crate::AppState;
 use crate::JsonMap;
 use crate::{MyError, Result};
 
-use deadpool_postgres::{Client, Transaction};
-use either::Either;
 use futures_util::FutureExt;
-use mlua::Function;
 use mlua::SerializeOptions;
 use mlua::UserData;
 use mlua::UserDataMethods;
 use mlua::{DeserializeOptions, Lua, LuaOptions, LuaSerdeExt, StdLib};
 use std::sync::Arc;
+use tokio::sync::oneshot::error::RecvError;
 use tokio::sync::{mpsc, oneshot};
 
 // only usefull for not luau
@@ -21,7 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
 struct TransactionAppState {
-    sender: mpsc::Sender<(Command, oneshot::Sender<serde_json::Value>)>,
+    sender: mpsc::Sender<(Command, oneshot::Sender<mlua::Result<serde_json::Value>>)>,
 }
 
 // impl<'a> UserData for TransactionAppState {}
@@ -49,10 +47,13 @@ impl<'a> UserData for TransactionAppState {
                     .await
                     .unwrap();
 
-                let response = rx.await.map_err(|e| to_lua_error(Arc::new(e)))?;
-
-                let options = SerializeOptions::new();
-                lua.to_value_with(&response, options)
+                match rx.await.map_err(|e| to_lua_error(Arc::new(e)))? {
+                    Ok(x) => {
+                        let options = SerializeOptions::new();
+                        lua.to_value_with(&x, options)
+                    }
+                    Err(e) => Err(e),
+                }
             },
         );
 
@@ -65,10 +66,13 @@ impl<'a> UserData for TransactionAppState {
                     .await
                     .unwrap();
 
-                let response = rx.await.map_err(|e| to_lua_error(Arc::new(e)))?;
-
-                let options = SerializeOptions::new();
-                lua.to_value_with(&response, options)
+                match rx.await.map_err(|e| to_lua_error(Arc::new(e)))? {
+                    Ok(x) => {
+                        let options = SerializeOptions::new();
+                        lua.to_value_with(&x, options)
+                    }
+                    Err(e) => Err(e),
+                }
             },
         );
 
@@ -82,10 +86,13 @@ impl<'a> UserData for TransactionAppState {
                 .await
                 .unwrap();
 
-            let response = rx.await.map_err(|e| to_lua_error(Arc::new(e)))?;
-
-            let options = SerializeOptions::new();
-            lua.to_value_with(&response, options)
+            match rx.await.map_err(|e| to_lua_error(Arc::new(e)))? {
+                Ok(x) => {
+                    let options = SerializeOptions::new();
+                    lua.to_value_with(&x, options)
+                }
+                Err(e) => Err(e),
+            }
         });
     }
 }
@@ -97,13 +104,21 @@ fn lua_print(_lua: &Lua, _asdf: mlua::Value) -> mlua::Result<()> {
 
 pub async fn build_runtime<'a>(
     app_state: AppState,
-    sender: mpsc::Sender<(Command, oneshot::Sender<serde_json::Value>)>,
+    sender: mpsc::Sender<(Command, oneshot::Sender<mlua::Result<serde_json::Value>>)>,
 ) -> Result<Lua> {
     let runtime = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
+    // let debug = runtime
+    //     .create_function(|_, value: mlua::Value| {
+    //         dbg!(&value);
+    //         Ok(())
+    //     })
+    //     .unwrap();
+
     {
         let globals = runtime.globals();
         // override / mock the print function
-        // globals.set("print", runtime.create_function(lua_print)?)?;
+        globals.set("print", runtime.create_function(lua_print)?)?;
+        // globals.set("debug", debug)?;
         globals.set("transaction", TransactionAppState { sender })?;
         // globals.set("transaction", app_state)?;
     }
@@ -119,11 +134,21 @@ fn value_from_option(value: Option<serde_json::Value>) -> serde_json::Value {
     }
 }
 
+fn convert_lua_value<'lua>(lua: &'lua Lua, value: mlua::Value<'lua>) -> Result<mlua::Value<'lua>> {
+    match value {
+        mlua::Value::Error(e) => {
+            let string = lua.create_string(&e.to_string())?;
+            Ok(mlua::Value::String(string))
+        }
+        value => Ok(value),
+    }
+}
+
 async fn something(
     app_state: AppState,
     script: &str,
     input: &serde_json::Value,
-    sender: mpsc::Sender<(Command, oneshot::Sender<serde_json::Value>)>,
+    sender: mpsc::Sender<(Command, oneshot::Sender<mlua::Result<serde_json::Value>>)>,
 ) -> Result<serde_json::Value> {
     let runtime = build_runtime(app_state, sender).await?;
     let options = SerializeOptions::new();
@@ -131,26 +156,36 @@ async fn something(
     runtime.globals().set("input", user_input)?;
 
     let output = runtime.load(script).eval_async().await?;
+    let output = convert_lua_value(&runtime, output)?;
     let options = DeserializeOptions::new().deny_unsupported_types(false);
     let result: serde_json::Value = runtime.from_value_with(output, options)?;
 
     Ok(result)
 }
 
+fn result_flatten(
+    res: std::result::Result<mlua::Result<serde_json::Value>, RecvError>,
+) -> Result<serde_json::Value> {
+    match res {
+        Ok(x) => x.map_err(|e| MyError::from(e)),
+        Err(e) => Err(e.into()),
+    }
+}
+
 async fn xd(
     res: Result<serde_json::Value>,
-    cmd_tx: mpsc::Sender<(Command, oneshot::Sender<serde_json::Value>)>,
+    cmd_tx: mpsc::Sender<(Command, oneshot::Sender<mlua::Result<serde_json::Value>>)>,
 ) -> Result<serde_json::Value> {
     match res {
         Ok(success) => {
             let (tx, rx) = oneshot::channel();
             cmd_tx.send((Command::Done(success), tx)).await.ok();
-            return Ok(value_from_option(rx.await.ok()));
+            return result_flatten(rx.await);
         }
         Err(e) => {
             let (tx, rx) = oneshot::channel();
             cmd_tx.send((Command::Error(e), tx)).await.ok();
-            return rx.await.map_err(|e| e.into());
+            return result_flatten(rx.await);
         }
     };
 }
@@ -175,7 +210,8 @@ pub async fn transaction(
     script: &str,
     input: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<(Command, oneshot::Sender<serde_json::Value>)>(100);
+    let (cmd_tx, mut cmd_rx) =
+        mpsc::channel::<(Command, oneshot::Sender<mlua::Result<serde_json::Value>>)>(100);
 
     let app_state_transaction = app_state.clone();
     let cmd_sender = cmd_tx.clone();
@@ -193,24 +229,23 @@ pub async fn transaction(
                         (table, record_id),
                         app_state_copy.clone(),
                     )
-                    .await?;
+                    .await
+                    .map(|data| {
+                        serde_json::to_value(&data).expect("value cannot be converted to json")
+                    })
+                    .map_err(|e| e.into());
 
-                    responder
-                        .send(
-                            serde_json::to_value(&response)
-                                .expect("value cannot be converted to json"),
-                        )
-                        .unwrap();
+                    responder.send(response).unwrap();
                 }
                 Command::Create(table, data) => {
-                    let response = methods::insert_record(&transaction, table, data).await?;
+                    let response = methods::insert_record(&transaction, table, data)
+                        .await
+                        .map(|data| {
+                            serde_json::to_value(&data).expect("value cannot be converted to json")
+                        })
+                        .map_err(|e| e.into());
 
-                    responder
-                        .send(
-                            serde_json::to_value(&response)
-                                .expect("value cannot be converted to json"),
-                        )
-                        .unwrap();
+                    responder.send(response).unwrap();
                 }
                 Command::Rollback(value) => {
                     result_container = Some(CommitOrRollback::Rollback(value));
@@ -302,7 +337,8 @@ async fn transaction_test_just_lua() {
 async fn transaction_test() {
     let script = r#"
     -- data = {email="example@example.com", username="example", password="example", created_on="2020-04-12T12:23:34"}
-    return transaction:create("accounts", input)
+    out = transaction:create("accounts", input)
+    transaction:rollback(out) 
     "#;
 
     let data = serde_json::json!({
@@ -343,10 +379,13 @@ async fn transaction_test_rollback() {
 #[tokio::test]
 async fn transaction_test_uniqueness_error() {
     let script = r#"
-    out, error = pcall(function () transaction:create("accounts", input) end)
-    out, error = pcall(function () transaction:create("accounts", input) end)
-    
-    return out
+    local status, err = pcall(function () transaction:create("accounts", input) end)
+    local status, err = pcall(function () transaction:create("accounts", input) end)
+    if not status and tostring(err):find("unique constraint") then
+        return err
+    else
+        error(err)
+    end
     "#;
 
     let data = serde_json::json!({
@@ -357,8 +396,9 @@ async fn transaction_test_uniqueness_error() {
     });
 
     let response = transaction(test_app_state(), script, &data).await.unwrap();
+    let response = response.as_str().unwrap();
 
-    assert_eq!(response, "rolled back");
+    assert!(response.contains("caused by: runtime error: db error: ERROR: duplicate key value violates unique constraint \"accounts_username_key\"\nDETAIL: Key (username)=(example1236) already exists."));
 }
 
 #[tokio::test]
