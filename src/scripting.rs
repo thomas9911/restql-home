@@ -30,7 +30,7 @@ fn to_lua_error(e: Arc<dyn std::error::Error + Send + Sync>) -> mlua::Error {
     mlua::Error::ExternalError(e)
 }
 
-impl<'a> UserData for TransactionAppState {
+impl UserData for TransactionAppState {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_async_method(
             "create",
@@ -103,7 +103,7 @@ fn lua_print(_lua: &Lua, _asdf: mlua::Value) -> mlua::Result<()> {
 }
 
 pub async fn build_runtime<'a>(
-    app_state: AppState,
+    _app_state: AppState,
     sender: mpsc::Sender<(Command, oneshot::Sender<mlua::Result<serde_json::Value>>)>,
 ) -> Result<Lua> {
     let runtime = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
@@ -124,7 +124,7 @@ pub async fn build_runtime<'a>(
     }
     runtime.sandbox(true)?;
 
-    return Ok(runtime);
+    Ok(runtime)
 }
 
 fn value_from_option(value: Option<serde_json::Value>) -> serde_json::Value {
@@ -167,7 +167,7 @@ fn result_flatten(
     res: std::result::Result<mlua::Result<serde_json::Value>, RecvError>,
 ) -> Result<serde_json::Value> {
     match res {
-        Ok(x) => x.map_err(|e| MyError::from(e)),
+        Ok(x) => x.map_err(MyError::from),
         Err(e) => Err(e.into()),
     }
 }
@@ -231,7 +231,7 @@ pub async fn transaction(
                     )
                     .await
                     .map(|data| {
-                        serde_json::to_value(&data).expect("value cannot be converted to json")
+                        serde_json::to_value(data).expect("value cannot be converted to json")
                     })
                     .map_err(|e| e.into());
 
@@ -241,7 +241,7 @@ pub async fn transaction(
                     let response = methods::insert_record(&transaction, table, data)
                         .await
                         .map(|data| {
-                            serde_json::to_value(&data).expect("value cannot be converted to json")
+                            serde_json::to_value(data).expect("value cannot be converted to json")
                         })
                         .map_err(|e| e.into());
 
@@ -264,15 +264,21 @@ pub async fn transaction(
 
         match result_container {
             Some(CommitOrRollback::Commit(value)) => {
-                dbg!(transaction.commit().await);
+                if let Err(e) = transaction.commit().await {
+                    eprintln!("{:?}", e);
+                }
                 Ok(value)
             }
             Some(CommitOrRollback::RollbackError(value)) => {
-                dbg!(transaction.rollback().await);
+                if let Err(e) = transaction.rollback().await {
+                    eprintln!("{:?}", e);
+                }
                 Err(value)
             }
             Some(CommitOrRollback::Rollback(value)) => {
-                dbg!(transaction.rollback().await);
+                if let Err(e) = transaction.rollback().await {
+                    eprintln!("{:?}", e);
+                }
                 Ok(value)
             }
             _ => panic!("invalid "),

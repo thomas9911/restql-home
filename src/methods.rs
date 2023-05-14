@@ -1,4 +1,3 @@
-use deadpool_postgres::GenericClient;
 use futures_util::stream::StreamExt;
 use time::{OffsetDateTime, PrimitiveDateTime};
 use tokio_postgres::{Column, Row};
@@ -9,7 +8,7 @@ use crate::{AppState, JsonMap, OptionalJsonMap, Result, Value};
 pub async fn get_record<C: deadpool_postgres::GenericClient>(
     client: &C,
     (table_name, record_id): (String, String),
-    state: AppState,
+    _state: AppState,
 ) -> Result<Option<OptionalJsonMap>> {
     // let client = state.pool.get().await?;
 

@@ -1,7 +1,5 @@
 use axum::extract::{Json, Path, State};
-use deadpool_postgres::PoolError;
 use either::Either;
-use std::sync::{Arc, Mutex};
 
 pub mod error;
 pub mod methods;
@@ -50,6 +48,6 @@ pub async fn insert_record(
             let result = methods::insert_record(&client, table_name, data).await?;
             Ok(Json(result))
         }
-        Either::Right(data) => todo!(),
+        Either::Right(_data) => todo!(),
     }
 }

@@ -1,4 +1,4 @@
-use ::serde::{Deserialize, Serialize};
+use ::serde::Serialize;
 use postgres_types::ToSql;
 use time::format_description::well_known::{iso8601, Iso8601};
 use time::{OffsetDateTime, PrimitiveDateTime};
@@ -31,6 +31,10 @@ pub enum Value {
 
 impl Value {
     pub fn parse_str(value: &str) -> Value {
+        if value.starts_with('"') && value.ends_with('"') {
+            return Value::parse_str(&value[1..(value.len() - 1)]);
+        };
+
         if let Ok(uuid) = Uuid::try_parse(value) {
             return Value::Uuid(uuid);
         };
