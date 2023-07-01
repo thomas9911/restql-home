@@ -3,7 +3,7 @@ use axum::{
     Router,
 };
 use deadpool_postgres::{Config, ManagerConfig, RecyclingMethod, Runtime};
-use restql_home::{get_record, insert_record, AppState};
+use restql_home::{get_record, insert_record, list_records, AppState};
 use tokio_postgres::NoTls;
 
 #[tokio::main]
@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(|| async { "Hello, World!" }))
-        .route("/:table_name", post(insert_record))
+        .route("/:table_name", post(insert_record).get(list_records))
         .route("/:table_name/:record_id", get(get_record))
         .with_state(shared_state);
 

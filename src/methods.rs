@@ -1,8 +1,11 @@
 use futures_util::stream::StreamExt;
+use postgres_types::BorrowToSql;
+use postgrest_query_parser::Ast;
 use time::{OffsetDateTime, PrimitiveDateTime};
 use tokio_postgres::{Column, Row};
 use uuid::Uuid;
 
+pub mod sql;
 use crate::{AppState, JsonMap, OptionalJsonMap, Result, Value};
 
 pub async fn get_record<C: deadpool_postgres::GenericClient>(
@@ -29,6 +32,25 @@ pub async fn get_record<C: deadpool_postgres::GenericClient>(
     dbg!(&result);
 
     Ok(result)
+}
+
+pub async fn list_records<C: deadpool_postgres::GenericClient>(
+    client: &C,
+    table_name: String,
+    params: Ast,
+    _state: AppState,
+) -> Result<Vec<OptionalJsonMap>> {
+    let (sql, parameters) = sql::format_params_ast(params, table_name)?;
+    let statement = sql;
+    let statement = client.prepare(&statement).await?;
+    let parameters = parameters.iter().map(|x| x.borrow_to_sql());
+
+    let result = match client.query_raw(&statement, parameters).await {
+        Ok(record) => record.map(try_row_to_object).collect::<Vec<_>>().await,
+        Err(e) => return Err(e.into()),
+    };
+    let result: Result<Vec<_>> = result.into_iter().collect();
+    result
 }
 
 pub async fn insert_record<C: deadpool_postgres::GenericClient>(
@@ -80,6 +102,12 @@ pub async fn insert_record<C: deadpool_postgres::GenericClient>(
     let data = data.ok_or_else(|| anyhow::Error::msg("invalid return statement"))?;
 
     Ok(data)
+}
+
+fn try_row_to_object(
+    row: std::result::Result<Row, tokio_postgres::Error>,
+) -> Result<OptionalJsonMap> {
+    Ok(row_to_object(row?))
 }
 
 fn row_to_object(row: Row) -> OptionalJsonMap {

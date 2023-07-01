@@ -1,6 +1,6 @@
-use axum::extract::{Json, Path, State};
+use axum::extract::{Json, Path, RawQuery, State};
 use either::Either;
-
+use postgrest_query_parser::{Ast, Lexer};
 pub mod error;
 pub mod methods;
 pub mod scripting;
@@ -30,6 +30,25 @@ pub async fn get_record(
 ) -> Result<Json<Option<OptionalJsonMap>>> {
     let client = state.pool.get().await?;
     let result = methods::get_record(&client, (table_name, record_id), state).await?;
+
+    Ok(Json(result))
+}
+
+#[axum::debug_handler]
+pub async fn list_records(
+    Path(table_name): Path<String>,
+    params: RawQuery,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<OptionalJsonMap>>> {
+    let params = if let Some(params) = params.0 {
+        let lexer = Lexer::new(params.chars());
+        Ast::from_lexer(&params, lexer)?
+    } else {
+        Ast::default()
+    };
+
+    let client = state.pool.get().await?;
+    let result = methods::list_records(&client, table_name, params, state).await?;
 
     Ok(Json(result))
 }
