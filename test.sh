@@ -5,4 +5,4 @@
 # curl -X POST --data '{"email": "example@example.com", "username": "example", "password": "example", "created_on": "2020-04-12T12:23:34"}' --header 'Content-Type: application/json' http://localhost:9503/accounts
 
 
-curl http://localhost:9503/accounts?select=myid:id,username
+curl http://localhost:9503/accounts

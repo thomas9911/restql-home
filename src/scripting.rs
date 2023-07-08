@@ -127,12 +127,12 @@ pub async fn build_runtime<'a>(
     Ok(runtime)
 }
 
-fn value_from_option(value: Option<serde_json::Value>) -> serde_json::Value {
-    match value {
-        Some(val) => val,
-        None => serde_json::Value::Null,
-    }
-}
+// fn value_from_option(value: Option<serde_json::Value>) -> serde_json::Value {
+//     match value {
+//         Some(val) => val,
+//         None => serde_json::Value::Null,
+//     }
+// }
 
 fn convert_lua_value<'lua>(lua: &'lua Lua, value: mlua::Value<'lua>) -> Result<mlua::Value<'lua>> {
     match value {

@@ -40,7 +40,7 @@ pub async fn list_records<C: deadpool_postgres::GenericClient>(
     params: Ast,
     _state: AppState,
 ) -> Result<Vec<OptionalJsonMap>> {
-    let (sql, parameters) = sql::format_params_ast(params, table_name)?;
+    let (sql, parameters) = sql::format_params_ast(params, &table_name)?;
     let statement = sql;
     let statement = client.prepare(&statement).await?;
     let parameters = parameters.iter().map(|x| x.borrow_to_sql());
@@ -123,8 +123,17 @@ fn row_to_pair((index, key): (usize, &Column), row: &Row) -> (String, Option<Val
 
     let value = match key.type_() {
         &Type::BOOL => row.get::<_, Option<bool>>(index).map(Value::Bool),
-        &Type::INT2 | &Type::INT4 | &Type::INT8 => row.get::<_, Option<i64>>(index).map(Value::Int),
-        &Type::FLOAT4 | &Type::FLOAT8 => row.get::<_, Option<f64>>(index).map(Value::Float),
+        &Type::INT2 => row
+            .get::<_, Option<i16>>(index)
+            .map(|x| Value::Int(x as i64)),
+        &Type::INT4 => row
+            .get::<_, Option<i32>>(index)
+            .map(|x| Value::Int(x as i64)),
+        &Type::INT8 => row.get::<_, Option<i64>>(index).map(Value::Int),
+        &Type::FLOAT4 => row
+            .get::<_, Option<f32>>(index)
+            .map(|x| Value::Float(x as f64)),
+        &Type::FLOAT8 => row.get::<_, Option<f64>>(index).map(Value::Float),
         &Type::TIMESTAMP => row
             .get::<_, Option<PrimitiveDateTime>>(index)
             .map(Value::DateTime),

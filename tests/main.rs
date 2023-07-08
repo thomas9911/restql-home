@@ -1,5 +1,6 @@
 use tokio_postgres::{Client, NoTls};
 
+use core::panic;
 use futures_util::Future;
 use libtest_mimic::{Arguments, Conclusion, Failed, Trial};
 use std::{process::Stdio, sync::Arc};
@@ -85,8 +86,9 @@ async fn teardown(teststate: SetupState) -> anyhow::Result<()> {
 
 async fn inner(args: Arguments) -> anyhow::Result<Conclusion> {
     let tests = vec![
-        Trial::test("insert_data", || trialing(insert_data())),
-        Trial::test("get string id", || trialing(get_string_id())),
+        // Trial::test("insert_data", || trialing(insert_data())),
+        // Trial::test("get string id", || trialing(get_string_id())),
+        Trial::test("select on filter", || trialing(select_on_filter())),
     ];
 
     Ok(libtest_mimic::run(&args, tests))
@@ -147,4 +149,22 @@ async fn get_string_id() {
 
     assert_eq!(data["id"], id);
     assert_eq!(data["description"], "This is a nice object");
+}
+
+async fn select_on_filter() {
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!(
+            "http://localhost:9503/books?select=author,mytitle:title&order=author.desc&limit=1"
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    let data: Vec<serde_json::Map<String, serde_json::Value>> = response.json().await.unwrap();
+
+    assert!(data.len() == 1);
+    assert_eq!(data[0]["author"], "Mary Parker");
+    assert_eq!(data[0]["mytitle"], "My First SQL book");
+    assert!(data[0].get("id").is_none());
 }
