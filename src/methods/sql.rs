@@ -5,11 +5,11 @@ use postgres_types::ToSql;
 use postgrest_query_parser::ast::order::{self, OrderItem};
 use postgrest_query_parser::ast::{select, Field, FieldKey, Order, Select};
 use postgrest_query_parser::Ast;
+use sea_query_binder::SqlxValues;
+use sea_schema::sea_query::{Value, Values};
 
-pub fn format_params_ast(
-    ast: Ast,
-    table_name: &str,
-) -> Result<(String, Vec<Box<dyn ToSql + Sync + Send>>)> {
+pub fn format_params_ast(ast: Ast, table_name: &str) -> Result<(String, SqlxValues)> {
+    // ) -> Result<(String, Vec<Box<dyn ToSql + Sync + Send>>)> {
     dbg!(&ast);
 
     let select = format_select(ast.select.as_ref(), None)?;
@@ -20,7 +20,7 @@ pub fn format_params_ast(
 
     Ok(dbg!(
         format!("SELECT {select} FROM {table_name}{join_part}{order}{limit}{offset}"),
-        Vec::new()
+        SqlxValues(Values(Vec::new()))
     ))
 }
 
@@ -160,7 +160,7 @@ fn select_format_sql() {
     let (sql, args) = format_params_ast(string_to_ast(input), "testing").unwrap();
 
     assert_eq!("SELECT id, artist as my_artist FROM testing", sql);
-    assert!(args.is_empty())
+    assert!(args.0 .0.is_empty())
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn select_with_nested_format_sql() {
     let (sql, args) = format_params_ast(string_to_ast(input), "testing").unwrap();
 
     assert_eq!("SELECT id, artist as my_artist FROM testing", sql);
-    assert!(args.is_empty())
+    assert!(args.0 .0.is_empty())
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn order_by_format_sql() {
         "SELECT id, artist FROM testing ORDER BY title DESC, width ASC NULLS FIRST, id DESC NULLS LAST",
         sql
     );
-    assert!(args.is_empty())
+    assert!(args.0 .0.is_empty())
 }
 
 #[test]
@@ -190,5 +190,5 @@ fn limit_and_offset_format_sql() {
     let (sql, args) = format_params_ast(string_to_ast(input), "testing").unwrap();
 
     assert_eq!("SELECT * FROM testing LIMIT 512 OFFSET 9321", sql);
-    assert!(args.is_empty())
+    assert!(args.0 .0.is_empty())
 }

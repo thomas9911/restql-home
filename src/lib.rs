@@ -8,9 +8,7 @@ pub mod value;
 
 pub use error::{MyError, Result};
 pub use value::Value;
-
-pub type JsonMap = std::collections::HashMap<String, Value>;
-pub type OptionalJsonMap = std::collections::HashMap<String, Option<Value>>;
+pub use value::{JsonMap, OptionalJsonMap};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde(transparent)]
@@ -21,15 +19,17 @@ pub struct InsertBody {
 
 #[derive(Debug, Clone)]
 pub struct AppState {
-    pub pool: deadpool_postgres::Pool,
+    // pub pool: deadpool_postgres::Pool,
+    pub pool: sqlx_core::pool::Pool<sqlx_core::postgres::Postgres>,
 }
 
 pub async fn get_record(
     Path((table_name, record_id)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<Json<Option<OptionalJsonMap>>> {
-    let client = state.pool.get().await?;
-    let result = methods::get_record(&client, (table_name, record_id), state).await?;
+    // let client = state.pool.get().await?;
+    let mut client = state.pool.acquire().await?;
+    let result = methods::get_record(&mut client, (table_name, record_id), state).await?;
 
     Ok(Json(result))
 }
@@ -47,8 +47,9 @@ pub async fn list_records(
         Ast::default()
     };
 
-    let client = state.pool.get().await?;
-    let result = methods::list_records(&client, table_name, params, state).await?;
+    // let client = state.pool.get().await?;
+    let mut client = state.pool.acquire().await?;
+    let result = methods::list_records(&mut client, table_name, params, state).await?;
 
     Ok(Json(result))
 }
@@ -60,11 +61,11 @@ pub async fn insert_record(
     Json(data): Json<InsertBody>,
 ) -> Result<Json<OptionalJsonMap>> {
     dbg!((&table_name, &data));
-    let client = state.pool.get().await?;
+    let mut client = state.pool.acquire().await?;
 
     match data.inner {
         Either::Left(data) => {
-            let result = methods::insert_record(&client, table_name, data).await?;
+            let result = methods::insert_record(&mut client, table_name, data).await?;
             Ok(Json(result))
         }
         Either::Right(_data) => todo!(),

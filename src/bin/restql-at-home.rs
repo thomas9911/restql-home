@@ -4,20 +4,33 @@ use axum::{
 };
 use deadpool_postgres::{Config, ManagerConfig, RecyclingMethod, Runtime};
 use restql_home::{get_record, insert_record, list_records, AppState};
+use sqlx_core::{
+    pool::PoolOptions,
+    postgres::{PgConnectOptions, PgPool},
+};
 use tokio_postgres::NoTls;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut cfg = Config::new();
-    cfg.dbname = Some("postgres".to_string());
-    cfg.user = Some("postgres".to_string());
-    cfg.host = Some("localhost".to_string());
-    cfg.port = Some(5432);
-    cfg.password = Some("example".to_string());
-    cfg.manager = Some(ManagerConfig {
-        recycling_method: RecyclingMethod::Fast,
-    });
-    let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+    // let mut cfg = Config::new();
+    // cfg.dbname = Some("postgres".to_string());
+    // cfg.user = Some("postgres".to_string());
+    // cfg.host = Some("localhost".to_string());
+    // cfg.port = Some(5432);
+    // cfg.password = Some("example".to_string());
+    // cfg.manager = Some(ManagerConfig {
+    //     recycling_method: RecyclingMethod::Fast,
+    // });
+    // let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+    let connect_opts = PgConnectOptions::new()
+        .host("localhost")
+        .port(5432)
+        .database("postgres")
+        .username("postgres")
+        .password("example");
+
+    let pool_opts = PoolOptions::new();
+    let pool = pool_opts.connect_with(connect_opts).await?;
 
     // let (client, connection) = tokio_postgres::connect("host=localhost user=postgres password=example", NoTls).await?;
 

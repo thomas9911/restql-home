@@ -8,6 +8,7 @@ use mlua::SerializeOptions;
 use mlua::UserData;
 use mlua::UserDataMethods;
 use mlua::{DeserializeOptions, Lua, LuaOptions, LuaSerdeExt, StdLib};
+use sqlx_core::connection::Connection;
 use std::sync::Arc;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::sync::{mpsc, oneshot};
@@ -216,8 +217,8 @@ pub async fn transaction(
     let app_state_transaction = app_state.clone();
     let cmd_sender = cmd_tx.clone();
     let transaction_join = tokio::spawn(async move {
-        let mut client = app_state_transaction.clone().pool.get().await?;
-        let transaction = client.transaction().await?;
+        let mut client = app_state_transaction.clone().pool.acquire().await?;
+        let mut transaction = client.begin().await?;
 
         let app_state_copy = app_state_transaction.clone();
         let mut result_container = None;
@@ -225,7 +226,7 @@ pub async fn transaction(
             match command {
                 Command::Get(table, record_id) => {
                     let response = methods::get_record(
-                        &transaction,
+                        &mut transaction,
                         (table, record_id),
                         app_state_copy.clone(),
                     )
@@ -238,7 +239,7 @@ pub async fn transaction(
                     responder.send(response).unwrap();
                 }
                 Command::Create(table, data) => {
-                    let response = methods::insert_record(&transaction, table, data)
+                    let response = methods::insert_record(&mut transaction, table, data)
                         .await
                         .map(|data| {
                             serde_json::to_value(data).expect("value cannot be converted to json")
@@ -300,20 +301,28 @@ pub async fn transaction(
 }
 
 #[cfg(test)]
-fn test_app_state() -> AppState {
-    use deadpool_postgres::{Config, ManagerConfig, RecyclingMethod, Runtime};
-    use tokio_postgres::NoTls;
+async fn test_app_state() -> AppState {
+    use sqlx_core::{pool::PoolOptions, postgres::PgConnectOptions};
 
-    let mut cfg = Config::new();
-    cfg.dbname = Some("postgres".to_string());
-    cfg.user = Some("postgres".to_string());
-    cfg.host = Some("localhost".to_string());
-    cfg.port = Some(5432);
-    cfg.password = Some("example".to_string());
-    cfg.manager = Some(ManagerConfig {
-        recycling_method: RecyclingMethod::Fast,
-    });
-    let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+    // let mut cfg = Config::new();
+    // cfg.dbname = Some("postgres".to_string());
+    // cfg.user = Some("postgres".to_string());
+    // cfg.host = Some("localhost".to_string());
+    // cfg.port = Some(5432);
+    // cfg.password = Some("example".to_string());
+    // cfg.manager = Some(ManagerConfig {
+    //     recycling_method: RecyclingMethod::Fast,
+    // });
+    // let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+    let connect_opts = PgConnectOptions::new()
+        .host("localhost")
+        .port(5432)
+        .database("postgres")
+        .username("postgres")
+        .password("example");
+
+    let pool_opts = PoolOptions::new();
+    let pool = pool_opts.connect_with(connect_opts).await.unwrap();
 
     let pool = pool;
     let app_state = AppState { pool };
@@ -333,7 +342,7 @@ async fn transaction_test_just_lua() {
 
     assert_eq!(
         serde_json::Value::String("test".to_string()),
-        transaction(test_app_state(), script, &serde_json::Value::Null)
+        transaction(test_app_state().await, script, &serde_json::Value::Null)
             .await
             .unwrap()
     );
@@ -354,7 +363,9 @@ async fn transaction_test() {
         "created_on": "2020-04-12T12:23:34"
     });
 
-    let response = transaction(test_app_state(), script, &data).await.unwrap();
+    let response = transaction(test_app_state().await, script, &data)
+        .await
+        .unwrap();
 
     assert_eq!(response["email"], "example1234@example.com");
 }
@@ -377,7 +388,9 @@ async fn transaction_test_rollback() {
         "created_on": "2020-04-12T12:23:34"
     });
 
-    let response = transaction(test_app_state(), script, &data).await.unwrap();
+    let response = transaction(test_app_state().await, script, &data)
+        .await
+        .unwrap();
 
     assert_eq!(response, "rolled back");
 }
@@ -401,7 +414,9 @@ async fn transaction_test_uniqueness_error() {
         "created_on": "2020-04-12T12:23:34"
     });
 
-    let response = transaction(test_app_state(), script, &data).await.unwrap();
+    let response = transaction(test_app_state().await, script, &data)
+        .await
+        .unwrap();
     let response = response.as_str().unwrap();
 
     assert!(response.contains("caused by: runtime error: db error: ERROR: duplicate key value violates unique constraint \"accounts_username_key\"\nDETAIL: Key (username)=(example1236) already exists."));
@@ -415,7 +430,7 @@ async fn transaction_unsafe_lua_io() {
     "#;
 
     assert!(
-        transaction(test_app_state(), script, &serde_json::Value::Null)
+        transaction(test_app_state().await, script, &serde_json::Value::Null)
             .await
             .is_err()
     );
@@ -429,7 +444,7 @@ async fn transaction_unsafe_lua_os() {
     "#;
 
     assert!(
-        transaction(test_app_state(), script, &serde_json::Value::Null)
+        transaction(test_app_state().await, script, &serde_json::Value::Null)
             .await
             .is_err()
     );
@@ -443,7 +458,7 @@ async fn transaction_unsafe_lua_debug() {
     "#;
 
     assert!(
-        transaction(test_app_state(), script, &serde_json::Value::Null)
+        transaction(test_app_state().await, script, &serde_json::Value::Null)
             .await
             .is_err()
     );
